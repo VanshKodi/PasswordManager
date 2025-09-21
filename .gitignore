@@ -1,0 +1,25 @@
+# Python virtual environment
+venv/
+.venv/
+env/
+.env
+
+# Python bytecode and cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Database file
+# We don't want to commit the user's actual password database to GitHub
+*.db
+*.db-journal
+
+# IDE and editor directories
+.vscode/
+.idea/
+
+# Distribution / build artifacts
+build/
+dist/
+*.egg-info/
