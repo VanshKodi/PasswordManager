@@ -95,20 +95,21 @@ def initialize_database():
         
         # --- NEW: Add all default settings for the application ---
         default_settings = {
-        'autotype_hotkey': '<ctrl>+.',
-        'autofilter_length': '8',
-        # New Password Settings
-        'password_length': '16',
-        'password_include_uppercase': '1', # 1 for True, 0 for False
-        'password_include_lowercase': '1',
-        'password_include_numbers': '1',
-        'password_include_symbols': '1',
-        # New Passphrase Settings
-        'passphrase_num_words': '4',
-        'passphrase_separator': '-',
-        'passphrase_capitalize': '1',
-        'passphrase_include_number': '1'
-    }
+            'autotype_hotkey': '<ctrl>+.',
+            'hide_hotkey': '<ctrl>+/', # <-- ADD THIS LINE
+            'autofilter_length': '3',
+            # New Password Settings
+            'password_length': '16',
+            'password_include_uppercase': '1', # 1 for True, 0 for False
+            'password_include_lowercase': '1',
+            'password_include_numbers': '1',
+            'password_include_symbols': '1',
+            # New Passphrase Settings
+            'passphrase_num_words': '4',
+            'passphrase_separator': '-',
+            'passphrase_capitalize': '1',
+            'passphrase_include_number': '1'
+        }
         for name, value in default_settings.items():
             cursor.execute("INSERT OR IGNORE INTO settings (setting_name, setting_value) VALUES (?, ?)", (name, value))
         
