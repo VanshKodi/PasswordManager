@@ -34,9 +34,6 @@ class SettingsView(ttk.Toplevel):
     
     def _load_settings(self):
         """Loads all settings from the database."""
-        self.dir_var.set(database.get_setting('autosave_directory'))
-        self.interval_var.set(database.get_setting('autosave_interval'))
-        self.limit_var.set(database.get_setting('autosave_limit'))
         self.hotkey_var.set(database.get_setting('autotype_hotkey')) # Fetches the hotkey
         self.length_var.set(database.get_setting('autofilter_length'))
 
@@ -44,23 +41,6 @@ class SettingsView(ttk.Toplevel):
         main_frame = ttk.Frame(self, padding=20)
         main_frame.pack(fill=BOTH, expand=True)
 
-        autosave_frame = ttk.Labelframe(main_frame, text="Autosave Backups", padding=15)
-        autosave_frame.pack(fill=X, pady=(0, 15))
-        autosave_frame.grid_columnconfigure(1, weight=1)
-
-        ttk.Label(autosave_frame, text="Backup Directory:").grid(row=0, column=0, sticky=W, pady=5)
-        dir_entry = ttk.Entry(autosave_frame, textvariable=self.dir_var)
-        dir_entry.grid(row=0, column=1, sticky=EW, padx=5)
-        ttk.Button(autosave_frame, text="Browse...", command=lambda: self.dir_var.set(filedialog.askdirectory(title="Select Autosave Folder") or self.dir_var.get())).grid(row=0, column=2, padx=5)
-
-        ttk.Label(autosave_frame, text="Backup Interval (minutes):").grid(row=1, column=0, sticky=W, pady=5)
-        interval_entry = ttk.Entry(autosave_frame, textvariable=self.interval_var, width=10)
-        interval_entry.grid(row=1, column=1, sticky=W, padx=5)
-        
-        ttk.Label(autosave_frame, text="Backups to Keep:").grid(row=2, column=0, sticky=W, pady=5)
-        limit_entry = ttk.Entry(autosave_frame, textvariable=self.limit_var, width=10)
-        limit_entry.grid(row=2, column=1, sticky=W, padx=5)
-        
         features_frame = ttk.Labelframe(main_frame, text="Features", padding=15)
         features_frame.pack(fill=X)
         features_frame.grid_columnconfigure(1, weight=1)
@@ -154,9 +134,6 @@ class SettingsView(ttk.Toplevel):
             messagebox.showerror("Invalid Input", "Interval, Limit, and Auto-Filter Length must be positive whole numbers.", parent=self)
             return
 
-        database.update_setting('autosave_directory', self.dir_var.get())
-        database.update_setting('autosave_interval', self.interval_var.get())
-        database.update_setting('autosave_limit', self.limit_var.get())
         database.update_setting('autofilter_length', self.length_var.get())
         
         self.settings_changed = True

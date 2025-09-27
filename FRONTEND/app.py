@@ -29,7 +29,6 @@ class App(ttk.Window):
         
         # --- Background Services & Communication ---
         self.key_listener_thread = None
-        self.autosave_timer_id = None
         self.hotkey_queue = queue.Queue()
         self.buffer_queue = queue.Queue()
         self.pynput_controller = keyboard.Controller()
@@ -73,7 +72,6 @@ class App(ttk.Window):
         buffer_size = int(database.get_setting('autofilter_length'))
         self.key_listener_thread = KeyListenerThread(self.hotkey_queue, self.buffer_queue, hotkey_str, buffer_size)
         self.key_listener_thread.start()
-        self._schedule_autosave()
         self._process_queues()
 
     def _stop_background_services(self):
@@ -81,38 +79,8 @@ class App(ttk.Window):
         if self.key_listener_thread:
             self.key_listener_thread.stop()
             self.key_listener_thread.join()
-        if self.autosave_timer_id:
-            self.after_cancel(self.autosave_timer_id)
-
-    def _schedule_autosave(self):
-        if self.autosave_timer_id:
-            self.after_cancel(self.autosave_timer_id)
-        interval_min = int(database.get_setting('autosave_interval'))
-        interval_ms = interval_min * 60 * 1000
-        self.autosave_timer_id = self.after(interval_ms, self._perform_autosave)
-        print(f"Next autosave scheduled in {interval_min} minutes.")
-
-    def _perform_autosave(self):
-        try:
-            db_path = os.path.join(ROOT_DIR, "password_manager.db")
-            backup_dir = database.get_setting('autosave_directory')
-            limit = int(database.get_setting('autosave_limit'))
-            if not os.path.exists(backup_dir): os.makedirs(backup_dir)
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            backup_path = os.path.join(backup_dir, f"backup_{timestamp}.db")
-            shutil.copy2(db_path, backup_path)
-            print(f"Database backed up to {backup_path}")
-            backups = sorted([f for f in os.listdir(backup_dir) if f.startswith('backup_') and f.endswith('.db')],
-                             key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)))
-            while len(backups) > limit:
-                os.remove(os.path.join(backup_dir, backups[0]))
-                print(f"Removed old backup: {backups[0]}")
-                backups.pop(0)
-        except Exception as e:
-            print(f"Error during autosave: {e}")
-        finally:
-            self._schedule_autosave()
-
+        
+    
     def _process_queues(self):
         try:
             if not self.hotkey_queue.empty():
@@ -178,13 +146,11 @@ class App(ttk.Window):
         with self.autotype_queue.mutex:
             self.autotype_queue.queue.clear()
         self.title("Password Manager")
-        
-        if self.main_view_frame:
-            self.main_view_frame.clear_selection()
             
         print(f"Credential disarmed. Reason: {reason}")
         
     def set_autofilter_state(self, is_enabled: bool):
         self.autofilter_enabled = is_enabled
         print(f"Auto-filter {'enabled' if is_enabled else 'disabled'}.")
-        self.main_view_frame.search_var.set("")  # Clear search box when toggling
+        self.main_view_frame.search_var.set("")  # Clear search box when toggled
+        

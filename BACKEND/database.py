@@ -6,7 +6,6 @@ import os
 from contextlib import contextmanager
 from typing import List, Optional
 
-# Import ROOT_DIR to create the default autosave directory
 from .config import DATABASE_FILE, ROOT_DIR
 from .models import User, Credential
 # Add this import at the top of BACKEND/database.py if it's missing
@@ -93,15 +92,9 @@ def initialize_database():
             )
         """)
         
-        # --- NEW: Create default autosave directory ---
-        default_autosave_dir = os.path.join(ROOT_DIR, "autosaves")
-        os.makedirs(default_autosave_dir, exist_ok=True)
         
         # --- NEW: Add all default settings for the application ---
         default_settings = {
-        'autosave_directory': default_autosave_dir,
-        'autosave_interval': '15',
-        'autosave_limit': '3',
         'autotype_hotkey': '<ctrl>+.',
         'autofilter_length': '8',
         # New Password Settings
