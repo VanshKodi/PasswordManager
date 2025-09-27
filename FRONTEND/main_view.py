@@ -4,281 +4,222 @@ import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from tkinter import messagebox
+import datetime
 
-# Import our backend and utility modules
 from BACKEND import database, crypto, models
 from FRONTEND import utils
+from .settings_view import SettingsView
+from .entry_form_view import EntryFormWindow 
+from .query_view import QueryView
 
 class MainView(ttk.Frame):
-    """The main view of the application, shown after successful login."""
+    """The main view of the application, based on the new UI design."""
+    
     def __init__(self, master, app_controller):
-        super().__init__(master, padding=(20, 20))
+        super().__init__(master)
         self.app_controller = app_controller
         
-        # Get the current user and their derived encryption key from the controller
         self.user = self.app_controller.current_user
         self.key = self.app_controller.encryption_key
         
-        # This will hold the ID of the currently selected credential in the list
-        self.selected_credential_id = None
+        self.credentials_cache = []
 
-        # --- Instance Variables for Widgets ---
-        self.service_var = tk.StringVar()
-        self.username_var = tk.StringVar()
-        self.password_var = tk.StringVar()
-        
-        # Generator variables
-        self.gen_length_var = tk.IntVar(value=16)
-        self.gen_upper_var = tk.BooleanVar(value=True)
-        self.gen_lower_var = tk.BooleanVar(value=True)
-        self.gen_digits_var = tk.BooleanVar(value=True)
-        self.gen_symbols_var = tk.BooleanVar(value=True)
-        self.gen_result_var = tk.StringVar()
+        self.search_var = tk.StringVar()
+        self.filter_var = tk.StringVar(value="all")
+        self.autofilter_enabled_var = tk.BooleanVar(value=False)
 
-        # --- Create and layout the main widgets ---
         self.create_widgets()
-        # Populate the list with the user's credentials
         self.refresh_credentials_list()
+    def _open_query_panel(self):
+        """Opens the raw SQL query panel."""
+        QueryView(self)
 
     def create_widgets(self):
         """Creates and arranges all widgets in the main view."""
-        # --- Top Bar: Welcome Message and Logout Button ---
-        top_frame = ttk.Frame(self)
-        top_frame.pack(fill=X, pady=(0, 20))
+        top_bar = ttk.Frame(self, padding=(10, 5))
+        top_bar.pack(fill=X, side=TOP)
         
-        welcome_text = f"Welcome, {self.user.username}!"
-        welcome_label = ttk.Label(top_frame, text=welcome_text, font=("Helvetica", 14))
-        welcome_label.pack(side=LEFT)
+        welcome_label = ttk.Label(top_bar, text=f"User: {self.user.username}", font=("Helvetica", 10, "bold"))
+        welcome_label.pack(side=LEFT, padx=5)
+
+        logout_button = ttk.Button(top_bar, text="Logout", command=self.app_controller.logout, bootstyle=(DANGER, OUTLINE), width=8)
+        logout_button.pack(side=RIGHT, padx=5)
+
+        actions_frame = ttk.Frame(self, padding=(10, 5))
+        actions_frame.pack(fill=X, side=TOP)
+
+        ttk.Button(actions_frame, text="Add Entry", command=self.add_entry, bootstyle=SUCCESS).pack(side=LEFT, padx=2)
+        ttk.Button(actions_frame, text="Edit Entry", command=self.edit_entry, bootstyle=(INFO, OUTLINE)).pack(side=LEFT, padx=2)
+        ttk.Button(actions_frame, text="Copy Username", command=self.copy_username, bootstyle=(INFO, OUTLINE)).pack(side=LEFT, padx=2)
+        ttk.Button(actions_frame, text="Copy Password", command=self.copy_password, bootstyle=(INFO, OUTLINE)).pack(side=LEFT, padx=2)
+        ttk.Button(actions_frame, text="Copy Username & Password", command=self._copy_user_and_pass).pack(side=LEFT, padx=2)
+        ttk.Button(actions_frame, text="Delete Entry", command=self.delete_entry, bootstyle=DANGER).pack(side=LEFT, padx=2)
         
-        logout_button = ttk.Button(top_frame, text="Logout", command=self.app_controller.logout, bootstyle=DANGER)
-        logout_button.pack(side=RIGHT)
+        ttk.Button(actions_frame, text="Settings", command=self._open_settings_panel, bootstyle=SECONDARY).pack(side=RIGHT, padx=2)
+        ttk.Button(actions_frame, text="Import/Export Vault", command=self.placeholder_action, bootstyle=SECONDARY).pack(side=RIGHT, padx=(2,2))
+        ttk.Button(actions_frame, text="Import/Export Vault", command=self.placeholder_action, bootstyle=SECONDARY).pack(side=RIGHT, padx=(2,2))
+        ttk.Button(actions_frame, text="Query Panel", command=self._open_query_panel, bootstyle=SECONDARY).pack(side=RIGHT, padx=2)
+        # --- MODIFIED: Storing the button as an instance variable to change it later ---
+        self.autofilter_button = ttk.Checkbutton(
+            actions_frame, 
+            text="Enable Auto Filter", 
+            variable=self.autofilter_enabled_var, 
+            bootstyle=(DANGER, TOOLBUTTON), # Start with red (DANGER)
+            command=self._on_autofilter_toggle
+        )
+        self.autofilter_button.pack(side=RIGHT, padx=2)
         
-        # --- Main Content Area using a PanedWindow for resizable panes ---
-        paned_window = ttk.PanedWindow(self, orient=HORIZONTAL)
-        paned_window.pack(fill=BOTH, expand=True)
+        search_frame = ttk.Frame(self, padding=(10, 10))
+        search_frame.pack(fill=X, side=TOP)
+        
+        ttk.Label(search_frame, text="Search:").pack(side=LEFT, padx=(5, 5))
+        self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var)
+        self.search_entry.pack(side=LEFT, fill=X, expand=True, padx=5)
+        self.search_entry.bind("<KeyRelease>", self.filter_treeview)
 
-        # --- Pane 1: Credentials List ---
-        list_frame = ttk.Frame(paned_window, padding=5)
-        self.create_credentials_list_pane(list_frame)
-        paned_window.add(list_frame, weight=1)
+        ttk.Label(search_frame, text="Filter:").pack(side=LEFT, padx=(10, 5))
+        filter_options = ["all", "sitename", "username", "description"]
+        filter_menu = ttk.Combobox(search_frame, textvariable=self.filter_var, values=filter_options, state="readonly", width=12)
+        filter_menu.pack(side=LEFT, padx=5)
+        filter_menu.bind("<<ComboboxSelected>>", self.filter_treeview)
+        
+        ttk.Button(search_frame, text="Clear", command=self._clear_filters).pack(side=LEFT, padx=5)
 
-        # --- Pane 2: Credential Details & Actions ---
-        details_frame = ttk.Frame(paned_window, padding=5)
-        self.create_details_and_actions_pane(details_frame)
-        paned_window.add(details_frame, weight=3)
+        tree_frame = ttk.Frame(self, padding=(10, 0))
+        tree_frame.pack(fill=BOTH, expand=True)
 
-    def create_credentials_list_pane(self, parent_frame):
-        """Creates the Treeview for listing credentials."""
-        list_label = ttk.Label(parent_frame, text="Saved Credentials", font=("Helvetica", 12, "bold"))
-        list_label.pack(pady=(0, 10))
-
-        # Create a Treeview to display credentials
-        self.tree = ttk.Treeview(parent_frame, columns=("service"), show="headings", selectmode="browse")
-        self.tree.heading("service", text="Service")
+        columns = ("site", "username", "description", "date_created", "date_modified")
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
+        
+        self.tree.heading("site", text="Site")
+        self.tree.heading("username", text="Username")
+        self.tree.heading("description", text="Description")
+        self.tree.heading("date_created", text="Date Created")
+        self.tree.heading("date_modified", text="Date Modified")
+        
+        self.tree.column("site", width=150)
+        self.tree.column("username", width=150)
+        self.tree.column("description", width=250)
+        self.tree.column("date_created", width=120, anchor=CENTER)
+        self.tree.column("date_modified", width=120, anchor=CENTER)
+        
         self.tree.pack(side=LEFT, fill=BOTH, expand=True)
 
-        # Add a scrollbar
-        scrollbar = ttk.Scrollbar(parent_frame, orient=VERTICAL, command=self.tree.yview)
+        scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL, command=self.tree.yview)
         scrollbar.pack(side=RIGHT, fill=Y)
         self.tree.configure(yscrollcommand=scrollbar.set)
-        
-        # Bind the selection event to a handler function
-        self.tree.bind("<<TreeviewSelect>>", self.on_credential_select)
-
-    def create_details_and_actions_pane(self, parent_frame):
-        """Creates the form for credential details and the action buttons."""
-        # --- Details Form ---
-        form_notebook = ttk.Notebook(parent_frame)
-        form_notebook.pack(fill=BOTH, expand=True, pady=(0, 20))
-        
-        details_tab = ttk.Frame(form_notebook, padding=10)
-        generator_tab = ttk.Frame(form_notebook, padding=10)
-        
-        form_notebook.add(details_tab, text="Credential Details")
-        form_notebook.add(generator_tab, text="Password Generator")
-        
-        # --- Details Tab Content ---
-        ttk.Label(details_tab, text="Service Name:").grid(row=0, column=0, sticky=W, pady=5)
-        self.service_entry = ttk.Entry(details_tab, textvariable=self.service_var, state=DISABLED)
-        self.service_entry.grid(row=0, column=1, sticky=EW, padx=5)
-        
-        ttk.Label(details_tab, text="Username / Email:").grid(row=1, column=0, sticky=W, pady=5)
-        self.username_entry = ttk.Entry(details_tab, textvariable=self.username_var, state=DISABLED)
-        self.username_entry.grid(row=1, column=1, sticky=EW, padx=5)
-
-        ttk.Label(details_tab, text="Password:").grid(row=2, column=0, sticky=W, pady=5)
-        self.password_entry = ttk.Entry(details_tab, textvariable=self.password_var, state=DISABLED)
-        self.password_entry.grid(row=2, column=1, sticky=EW, padx=5)
-
-        details_tab.grid_columnconfigure(1, weight=1) # Makes entries expand
-        
-        self.copy_password_button = ttk.Button(details_tab, text="Copy Password", command=self.copy_password, state=DISABLED)
-        self.copy_password_button.grid(row=3, column=1, sticky=E, pady=10)
-
-        # --- Generator Tab Content ---
-        self.create_generator_pane(generator_tab)
-        
-        # --- Action Buttons (Add, Save, Delete) ---
-        action_frame = ttk.Frame(parent_frame)
-        action_frame.pack(fill=X)
-        
-        self.add_button = ttk.Button(action_frame, text="Add New", command=self.prepare_for_add, bootstyle=SUCCESS)
-        self.add_button.pack(side=LEFT, padx=5)
-        
-        self.save_button = ttk.Button(action_frame, text="Save New", command=self.save_new_credential, state=DISABLED)
-        self.save_button.pack(side=LEFT, padx=5)
-        
-        self.delete_button = ttk.Button(action_frame, text="Delete", command=self.delete_credential, bootstyle=DANGER, state=DISABLED)
-        self.delete_button.pack(side=RIGHT, padx=5)
-
-    def create_generator_pane(self, parent_frame):
-        """Creates the password generator UI elements."""
-        ttk.Label(parent_frame, text="Length:").grid(row=0, column=0, sticky=W, pady=2)
-        ttk.Entry(parent_frame, textvariable=self.gen_length_var, width=5).grid(row=0, column=1, sticky=W, pady=2)
-
-        ttk.Checkbutton(parent_frame, text="Uppercase (A-Z)", variable=self.gen_upper_var, bootstyle=PRIMARY).grid(row=1, column=0, columnspan=2, sticky=W, pady=2)
-        ttk.Checkbutton(parent_frame, text="Lowercase (a-z)", variable=self.gen_lower_var, bootstyle=PRIMARY).grid(row=2, column=0, columnspan=2, sticky=W, pady=2)
-        ttk.Checkbutton(parent_frame, text="Numbers (0-9)", variable=self.gen_digits_var, bootstyle=PRIMARY).grid(row=3, column=0, columnspan=2, sticky=W, pady=2)
-        ttk.Checkbutton(parent_frame, text="Symbols (!@#$)", variable=self.gen_symbols_var, bootstyle=PRIMARY).grid(row=4, column=0, columnspan=2, sticky=W, pady=2)
-
-        generate_button = ttk.Button(parent_frame, text="Generate", command=self.generate_and_display_password, bootstyle=INFO)
-        generate_button.grid(row=5, column=0, columnspan=2, pady=10)
-
-        ttk.Entry(parent_frame, textvariable=self.gen_result_var, state=READONLY).grid(row=6, column=0, columnspan=2, sticky=EW, pady=5)
-        
-        copy_gen_button = ttk.Button(parent_frame, text="Copy & Use", command=self.copy_generated_password)
-        copy_gen_button.grid(row=7, column=0, columnspan=2)
     
-    # --- Data and Event Handling Methods ---
-
-    def refresh_credentials_list(self):
-        """Clears and re-populates the credentials list from the database."""
-        # Clear existing items
+    def filter_treeview(self, event=None):
+        search_term = self.search_var.get()
+        filter_scope = self.filter_var.get()
+        
         for item in self.tree.get_children():
             self.tree.delete(item)
-            
-        # Fetch and insert new items
-        self.credentials_data = database.get_credentials_for_user(self.user.id)
-        for cred in self.credentials_data:
-            # The 'iid' is the unique ID for the tree item, which we set to the DB id.
-            self.tree.insert("", END, iid=cred.id, values=(cred.service_name,))
-    
-    def on_credential_select(self, event):
-        """Handles when a user clicks on an item in the credentials list."""
+
+        self.credentials_cache = database.search_credentials(self.user.id, search_term, filter_scope)
+        
+        for cred in self.credentials_cache:
+            created = datetime.datetime.fromisoformat(cred.date_created).strftime('%Y-%m-%d %H:%M') if cred.date_created else ""
+            modified = datetime.datetime.fromisoformat(cred.date_modified).strftime('%Y-%m-%d %H:%M') if cred.date_modified else ""
+            values = (cred.service_name, cred.username, cred.description or "", created, modified)
+            self.tree.insert("", END, iid=cred.id, values=values)
+
+    def get_selected_credential(self):
         selected_items = self.tree.selection()
         if not selected_items:
+            return None
+        selected_id = int(selected_items[0])
+        return next((c for c in self.credentials_cache if c.id == selected_id), None)
+
+    def add_entry(self):
+        form = EntryFormWindow(self, title="Add New Entry")
+        if form.result:
+            encrypted_pass = crypto.encrypt_password(form.result["password"], self.key)
+            new_cred = models.Credential(id=None, user_id=self.user.id, service_name=form.result["site"],
+                                          username=form.result["username"], encrypted_password=encrypted_pass,
+                                          description=form.result["description"])
+            database.add_credential(new_cred)
+            self.filter_treeview()
+
+    def edit_entry(self):
+        selected_cred = self.get_selected_credential()
+        if not selected_cred:
+            messagebox.showwarning("No Selection", "Please select an entry from the list first.", parent=self)
             return
-            
-        self.selected_credential_id = int(selected_items[0])
-        
-        # Find the full credential data from our stored list
-        selected_cred = next((c for c in self.credentials_data if c.id == self.selected_credential_id), None)
-        
+        plain_password = crypto.decrypt_password(selected_cred.encrypted_password, self.key)
+        initial_data = {
+            "site": selected_cred.service_name, "username": selected_cred.username,
+            "password": plain_password, "description": selected_cred.description or ""
+        }
+        form = EntryFormWindow(self, title="Edit Entry", initial_data=initial_data)
+        if form.result:
+            encrypted_pass = crypto.encrypt_password(form.result["password"], self.key)
+            database.update_credential(
+                cred_id=selected_cred.id, service=form.result["site"], username=form.result["username"],
+                enc_pass=encrypted_pass, desc=form.result["description"]
+            )
+            self.filter_treeview()
+
+    def delete_entry(self):
+        selected_cred = self.get_selected_credential()
+        if not selected_cred:
+            messagebox.showwarning("No Selection", "Please select an entry from the list first.", parent=self)
+            return
+        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete the entry for '{selected_cred.service_name}'?"):
+            database.delete_credential(selected_cred.id)
+            self.filter_treeview()
+
+    def copy_username(self):
+        selected_cred = self.get_selected_credential()
         if selected_cred:
-            # Decrypt the password
-            decrypted_password = crypto.decrypt_password(selected_cred.encrypted_password, self.key)
-            
-            # Populate the form
-            self.service_var.set(selected_cred.service_name)
-            self.username_var.set(selected_cred.username)
-            self.password_var.set(decrypted_password)
-
-            # Update widget states
-            self.service_entry.config(state=DISABLED)
-            self.username_entry.config(state=DISABLED)
-            self.password_entry.config(state=DISABLED)
-            self.save_button.config(state=DISABLED)
-            self.delete_button.config(state=NORMAL)
-            self.copy_password_button.config(state=NORMAL)
-
-    def prepare_for_add(self):
-        """Clears the form and prepares it for adding a new credential."""
-        self.tree.selection_set("") # Deselect any item in the list
-        self.selected_credential_id = None
-        
-        self.service_var.set("")
-        self.username_var.set("")
-        self.password_var.set("")
-        
-        self.service_entry.config(state=NORMAL)
-        self.username_entry.config(state=NORMAL)
-        self.password_entry.config(state=NORMAL)
-        
-        self.save_button.config(state=NORMAL)
-        self.delete_button.config(state=DISABLED)
-        self.copy_password_button.config(state=DISABLED)
-        
-        self.service_entry.focus() # Set focus to the first field
-
-    def save_new_credential(self):
-        """Saves a new credential to the database."""
-        service = self.service_var.get()
-        username = self.username_var.get()
-        password = self.password_var.get()
-        
-        if not all([service, username, password]):
-            messagebox.showerror("Error", "All fields must be filled.")
-            return
-
-        # Encrypt the new password
-        encrypted_pass = crypto.encrypt_password(password, self.key)
-        
-        # Create a model instance and save to DB
-        new_cred = models.Credential(
-            id=None,
-            user_id=self.user.id,
-            service_name=service,
-            username=username,
-            encrypted_password=encrypted_pass
-        )
-        database.add_credential(new_cred)
-        
-        messagebox.showinfo("Success", "Credential saved successfully.")
-        
-        self.refresh_credentials_list()
-        self.prepare_for_add() # Reset form after saving
-        self.service_entry.config(state=DISABLED)
-        self.username_entry.config(state=DISABLED)
-        self.password_entry.config(state=DISABLED)
-        self.save_button.config(state=DISABLED)
-        
-    def delete_credential(self):
-        """Deletes the selected credential from the database."""
-        if not self.selected_credential_id:
-            return
-            
-        if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this credential?"):
-            database.delete_credential(self.selected_credential_id)
-            self.refresh_credentials_list()
-            self.prepare_for_add() # Reset form
-            self.service_entry.config(state=DISABLED)
-            self.username_entry.config(state=DISABLED)
-            self.password_entry.config(state=DISABLED)
-            self.save_button.config(state=DISABLED)
-            messagebox.showinfo("Success", "Credential deleted.")
+            utils.copy_to_clipboard(selected_cred.username, self)
+            messagebox.showinfo("Copied", "Username copied to clipboard.", parent=self)
+        else:
+            messagebox.showwarning("No Selection", "Please select an entry to copy.", parent=self)
 
     def copy_password(self):
-        """Copies the currently displayed password to the clipboard."""
-        password = self.password_var.get()
-        if password:
-            utils.copy_to_clipboard(password, self.winfo_toplevel())
-            messagebox.showinfo("Copied", "Password copied to clipboard for 30 seconds.", parent=self)
+        selected_cred = self.get_selected_credential()
+        if selected_cred:
+            plain_password = crypto.decrypt_password(selected_cred.encrypted_password, self.key)
+            utils.copy_to_clipboard(plain_password, self)
+            messagebox.showinfo("Copied", "Password copied to clipboard.", parent=self)
+        else:
+            messagebox.showwarning("No Selection", "Please select an entry to copy.", parent=self)
 
-    def generate_and_display_password(self):
-        """Generates a password based on selected criteria."""
-        generated_pass = utils.generate_password(
-            length=self.gen_length_var.get(),
-            use_uppercase=self.gen_upper_var.get(),
-            use_lowercase=self.gen_lower_var.get(),
-            use_numbers=self.gen_digits_var.get(),
-            use_symbols=self.gen_symbols_var.get()
-        )
-        self.gen_result_var.set(generated_pass)
+    # In FRONTEND/main_view.py, find this method and REPLACE it:
+
+    def _copy_user_and_pass(self):
+        """Tells the app controller to ARM the selected credential for auto-typing."""
+        selected_cred = self.get_selected_credential()
+        if selected_cred:
+            self.app_controller.arm_credential_for_autotype(selected_cred)
+        else:
+            messagebox.showwarning("No Selection", "Please select an entry to arm for auto-typing.", parent=self)
+
+    def _open_settings_panel(self):
+        settings_window = SettingsView(self)
+        if settings_window.settings_changed:
+            self.app_controller.on_settings_changed()
+
+    def _clear_filters(self):
+        self.search_var.set("")
+        self.filter_var.set("all")
+        self.filter_treeview()
+
+    # --- MODIFIED: This function now updates the button's appearance ---
+    def _on_autofilter_toggle(self):
+        is_enabled = self.autofilter_enabled_var.get()
+        self.app_controller.set_autofilter_state(is_enabled)
         
-    def copy_generated_password(self):
-        """Copies the generated password and also places it in the main password field."""
-        password = self.gen_result_var.get()
-        if password:
-            self.password_var.set(password)
-            utils.copy_to_clipboard(password, self.winfo_toplevel())
-            messagebox.showinfo("Copied", "Generated password copied and set as current password.", parent=self)
+        if is_enabled:
+            self.autofilter_button.config(text="Disable Auto Filter", bootstyle=(SUCCESS, TOOLBUTTON))
+        else:
+            self.autofilter_button.config(text="Enable Auto Filter", bootstyle=(DANGER, TOOLBUTTON))
+            self.search_var.set("")
+            self.filter_treeview()
+
+    def refresh_credentials_list(self):
+        self.filter_treeview()
+
+    def placeholder_action(self):
+        messagebox.showinfo("Coming Soon", "This feature is not yet implemented.", parent=self)

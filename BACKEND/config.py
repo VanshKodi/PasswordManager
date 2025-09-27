@@ -16,3 +16,6 @@ KEY_SALT = b'some_random_salt_for_key_derivation'
 
 # Hashing work factor for Passlib (higher is more secure but slower)
 BCRYPT_ROUNDS = 12
+
+# A dedicated salt for the passphrase recovery feature
+PASSPHRASE_SALT = b'a_different_salt_for_passphrases'

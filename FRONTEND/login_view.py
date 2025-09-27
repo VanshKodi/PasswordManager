@@ -6,6 +6,10 @@ from tkinter import messagebox
 
 # Import backend modules
 from BACKEND import database, crypto, models
+# --- NEW --- Import the new recovery setup view
+from .recovery_setup_view import RecoverySetupView
+# Add this with your other imports
+from .forgot_password_view import ForgotPasswordView
 
 class LoginView(ttk.Frame):
     """The view for handling user login and signup."""
@@ -17,21 +21,20 @@ class LoginView(ttk.Frame):
         self.username_var = ttk.StringVar()
         self.password_var = ttk.StringVar()
         self.message_var = ttk.StringVar()
+        # --- NEW --- Dictionary to track failed login attempts per user
+        self.failed_attempts = {}
 
         # --- Widget Creation ---
         self.create_widgets()
 
     def create_widgets(self):
         """Creates and lays out the widgets for the login form."""
-        # Main frame to center the content
         form_frame = ttk.Frame(self)
         form_frame.place(relx=0.5, rely=0.5, anchor=CENTER)
         
-        # --- Title ---
         title_label = ttk.Label(form_frame, text="Password Manager", font=("Helvetica", 24, "bold"))
         title_label.pack(pady=(0, 20))
         
-        # --- Form Entries ---
         username_label = ttk.Label(form_frame, text="Username:")
         username_label.pack(fill=X, pady=(0, 5))
         username_entry = ttk.Entry(form_frame, textvariable=self.username_var, width=40)
@@ -42,7 +45,6 @@ class LoginView(ttk.Frame):
         password_entry = ttk.Entry(form_frame, textvariable=self.password_var, show="*", width=40)
         password_entry.pack(fill=X, pady=(0, 20))
 
-        # --- Buttons ---
         button_frame = ttk.Frame(form_frame)
         button_frame.pack(fill=X, pady=(10, 10))
         
@@ -52,9 +54,12 @@ class LoginView(ttk.Frame):
         signup_button = ttk.Button(button_frame, text="Sign Up", command=self.handle_signup, bootstyle=INFO)
         signup_button.pack(side=RIGHT, fill=X, expand=True, padx=(5, 0))
         
-        # --- Message Label ---
         message_label = ttk.Label(form_frame, textvariable=self.message_var, foreground="red")
         message_label.pack(pady=(10, 0))
+
+        # --- NEW --- "Forgot Password?" button
+        forgot_pass_button = ttk.Button(form_frame, text="Forgot Password?", command=self.open_forgot_password_window, bootstyle=(LINK, PRIMARY))
+        forgot_pass_button.pack(pady=(10, 0))
 
     def handle_login(self):
         """Handles the logic for when the Login button is clicked."""
@@ -66,18 +71,33 @@ class LoginView(ttk.Frame):
             return
 
         user = database.get_user_by_username(username)
+        login_successful = user and crypto.verify_master_password(password, user.hashed_master_password)
 
-        if user and crypto.verify_master_password(password, user.hashed_master_password):
-            self.message_var.set("") # Clear any error messages
-            # Derive the key needed for this session
+        if login_successful:
+            self.message_var.set("")
+            if username in self.failed_attempts:
+                del self.failed_attempts[username] # Reset counter on success
+            
             encryption_key = crypto.derive_key(password)
-            # Tell the main app to switch to the main view
             self.app_controller.show_main_view(user, encryption_key)
         else:
-            self.message_var.set("Invalid username or password.")
+            # --- MODIFIED --- Handle failed attempts and hints
+            self.failed_attempts[username] = self.failed_attempts.get(username, 0) + 1
+            
+            error_message = "Invalid username or password."
+            if self.failed_attempts.get(username, 0) >= 2 and user and user.password_hint:
+                error_message += f"\nHint: {user.password_hint}"
+            
+            self.message_var.set(error_message)
+    def open_forgot_password_window(self):
+        """Opens the password recovery window."""
+        ForgotPasswordView(self)
 
     def handle_signup(self):
-        """Handles the logic for when the Sign Up button is clicked."""
+        """
+        --- MODIFIED ---
+        Handles the initial validation for signup and then opens the recovery setup window.
+        """
         username = self.username_var.get()
         password = self.password_var.get()
 
@@ -93,11 +113,15 @@ class LoginView(ttk.Frame):
             self.message_var.set("Username already exists.")
             return
             
-        try:
-            hashed_password = crypto.hash_master_password(password)
-            new_user = models.User(id=None, username=username, hashed_master_password=hashed_password)
-            database.create_user(new_user)
-            self.message_var.set("") # Clear any error messages
-            messagebox.showinfo("Success", "Signup successful! You can now log in.")
-        except Exception as e:
-            self.message_var.set(f"An error occurred: {e}")
+        # If initial validation passes, open the recovery setup window
+        self.message_var.set("") # Clear any previous errors
+        RecoverySetupView(self, username, password)
+        # The RecoverySetupView window will now handle the rest of the signup process.
+        # After it closes, we can clear the fields here.
+        self.username_var.set("")
+        self.password_var.set("")
+    
+    # Replace the old placeholder function with this
+def open_forgot_password_window(self):
+    """Opens the password recovery window."""
+    ForgotPasswordView(self)

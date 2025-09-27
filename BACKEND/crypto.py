@@ -2,15 +2,15 @@
 
 import base64
 import hashlib
+import secrets # Added secrets for passphrase generation
+import string  # Added string for passphrase generation
 from cryptography.fernet import Fernet
 from passlib.context import CryptContext
 
-# Import constants from our config file
-from .config import KEY_SALT, BCRYPT_ROUNDS
+# Import constants from our config file (MODIFIED to include new salt)
+from .config import KEY_SALT, BCRYPT_ROUNDS, PASSPHRASE_SALT
 
 # 1. --- MASTER PASSWORD HASHING ---
-# Use passlib for robust password hashing (bcrypt)
-# This is for securely storing the master password itself.
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=BCRYPT_ROUNDS)
 
 def hash_master_password(password: str) -> str:
@@ -23,26 +23,19 @@ def verify_master_password(plain_password: str, hashed_password: str) -> bool:
 
 
 # 2. --- ENCRYPTION KEY DERIVATION ---
-# This function turns the master password into a usable encryption key.
-# This key is never stored; it's generated on-the-fly when the user logs in.
 def derive_key(master_password: str) -> bytes:
     """Derives a 32-byte encryption key from the master password and a salt."""
-    # We use PBKDF2HMAC, a standard key derivation function.
-    # 100,000 iterations is a common recommendation.
     kdf = hashlib.pbkdf2_hmac(
-        'sha256',  # The hash algorithm
-        master_password.encode('utf-8'),  # Convert the password to bytes
-        KEY_SALT,  # Use the salt from our config
-        100000,    # Number of iterations
-        dklen=32   # Desired key length in bytes
+        'sha256',
+        master_password.encode('utf-8'),
+        KEY_SALT,
+        100000,
+        dklen=32
     )
-    # Return the key in a URL-safe base64 format, required by Fernet
     return base64.urlsafe_b64encode(kdf)
 
 
 # 3. --- CREDENTIAL PASSWORD ENCRYPTION/DECRYPTION ---
-# These functions use the derived key to encrypt and decrypt the user's
-# stored passwords (e.g., their Google, Netflix, etc. passwords).
 def encrypt_password(password_to_encrypt: str, encryption_key: bytes) -> bytes:
     """Encrypts a password using the derived key."""
     fernet = Fernet(encryption_key)
@@ -54,3 +47,51 @@ def decrypt_password(encrypted_password: bytes, encryption_key: bytes) -> str:
     fernet = Fernet(encryption_key)
     decrypted_pass = fernet.decrypt(encrypted_password).decode('utf-8')
     return decrypted_pass
+
+
+# 4. --- NEW: PASSPHRASE RECOVERY FUNCTIONS ---
+
+# A simple wordlist for generating memorable passphrases.
+# In a larger application, this might come from an external file.
+WORDLIST = [
+    'apple', 'banana', 'carrot', 'diamond', 'eagle', 'forest', 'galaxy', 'harbor',
+    'island', 'jacket', 'king', 'lemon', 'mountain', 'ninja', 'ocean', 'planet',
+    'queen', 'river', 'shadow', 'tiger', 'unicorn', 'volcano', 'window', 'xenon',
+    'yellow', 'zebra', 'anchor', 'bridge', 'candle', 'desert'
+]
+
+def generate_recovery_passphrase(num_words: int = 4) -> str:
+    """Generates a memorable, hyphen-separated passphrase."""
+    selected_words = [secrets.choice(WORDLIST) for _ in range(num_words)]
+    return "-".join(selected_words)
+
+def _derive_key_from_passphrase(passphrase: str) -> bytes:
+    """
+    Derives an encryption key from the recovery passphrase.
+    Uses a different salt than the main key derivation.
+    """
+    kdf = hashlib.pbkdf2_hmac(
+        'sha256',
+        passphrase.encode('utf-8'),
+        PASSPHRASE_SALT, # Using the new, dedicated salt
+        100000,
+        dklen=32
+    )
+    return base64.urlsafe_b64encode(kdf)
+
+def encrypt_with_passphrase(master_password: str, passphrase: str) -> bytes:
+    """Encrypts the master password using the recovery passphrase."""
+    key = _derive_key_from_passphrase(passphrase)
+    fernet = Fernet(key)
+    return fernet.encrypt(master_password.encode('utf-8'))
+
+def decrypt_with_passphrase(encrypted_master_pass: bytes, passphrase: str) -> str:
+    """Decrypts the master password using the recovery passphrase."""
+    key = _derive_key_from_passphrase(passphrase)
+    fernet = Fernet(key)
+    try:
+        decrypted_pass = fernet.decrypt(encrypted_master_pass).decode('utf-8')
+        return decrypted_pass
+    except Exception:
+        # This will catch errors if the wrong passphrase is used
+        return ""

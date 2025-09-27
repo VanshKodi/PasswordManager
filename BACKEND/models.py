@@ -3,17 +3,18 @@
 from dataclasses import dataclass
 from typing import Optional
 
-# Optional[int] is used for the id because a new object won't have an id
-# until it's been saved to the database.
-
+# (The User class is unchanged)
 @dataclass
 class User:
     """Represents a user of the password manager."""
     id: Optional[int]
     username: str
     hashed_master_password: str
+    password_hint: Optional[str] = None
+    recovery_passphrase_protected_master: Optional[bytes] = None
 
 
+# --- UPDATED Credential Class ---
 @dataclass
 class Credential:
     """Represents a single credential entry stored for a user."""
@@ -22,8 +23,13 @@ class Credential:
     service_name: str
     username: str
     encrypted_password: bytes
+    # --- NEW FIELDS ---
+    description: Optional[str] = None
+    date_created: Optional[str] = None
+    date_modified: Optional[str] = None
 
 
+# (The Setting class is unchanged)
 @dataclass
 class Setting:
     """Represents a single key-value setting."""
