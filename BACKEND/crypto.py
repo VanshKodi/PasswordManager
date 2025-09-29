@@ -2,12 +2,12 @@
 
 import base64
 import hashlib
-import secrets # Added secrets for passphrase generation
-import string  # Added string for passphrase generation
+import secrets 
+import string  
+import random # --- NEW: Import random for smart number substitution
 from cryptography.fernet import Fernet
 from passlib.context import CryptContext
 
-# Import constants from our config file (MODIFIED to include new salt)
 from .config import KEY_SALT, BCRYPT_ROUNDS, PASSPHRASE_SALT
 
 # 1. --- MASTER PASSWORD HASHING ---
@@ -49,10 +49,8 @@ def decrypt_password(encrypted_password: bytes, encryption_key: bytes) -> str:
     return decrypted_pass
 
 
-# 4. --- NEW: PASSPHRASE RECOVERY FUNCTIONS ---
+# 4. --- PASSPHRASE RECOVERY & GENERATION ---
 
-# A simple wordlist for generating memorable passphrases.
-# In a larger application, this might come from an external file.
 WORDLIST = [
     'apple', 'banana', 'carrot', 'diamond', 'eagle', 'forest', 'galaxy', 'harbor',
     'island', 'jacket', 'king', 'lemon', 'mountain', 'ninja', 'ocean', 'planet',
@@ -61,9 +59,38 @@ WORDLIST = [
 ]
 
 def generate_recovery_passphrase(num_words: int = 4) -> str:
-    """Generates a memorable, hyphen-separated passphrase."""
+    """Generates a simple, memorable, hyphen-separated passphrase for recovery."""
     selected_words = [secrets.choice(WORDLIST) for _ in range(num_words)]
     return "-".join(selected_words)
+
+# --- NEW: Configurable Passphrase Generator ---
+def generate_passphrase(num_words: int, separator: str, capitalize: bool, include_number: bool) -> str:
+    """Generates a configurable, memorable passphrase based on user settings."""
+    selected_words = [secrets.choice(WORDLIST) for _ in range(num_words)]
+    
+    if capitalize:
+        selected_words = [word.capitalize() for word in selected_words]
+
+    if include_number and num_words > 0:
+        word_to_change_idx = secrets.randbelow(num_words)
+        word = selected_words[word_to_change_idx]
+        
+        # Leetspeak-style replacements for a more natural feel
+        replacements = {'e': '3', 'a': '4', 'o': '0', 'l': '1', 's': '5'}
+        possible_chars = list(replacements.keys())
+        random.shuffle(possible_chars) # Randomize to avoid predictable substitutions
+        
+        for char in possible_chars:
+            if char in word.lower():
+                # Replace the first occurrence of the character
+                new_word = word.replace(char, replacements[char], 1)
+                if capitalize:
+                    # Attempt to preserve capitalization
+                    new_word = new_word.capitalize()
+                selected_words[word_to_change_idx] = new_word
+                break # Only make one substitution per passphrase
+                
+    return separator.join(selected_words)
 
 def _derive_key_from_passphrase(passphrase: str) -> bytes:
     """

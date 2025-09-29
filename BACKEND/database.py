@@ -8,11 +8,7 @@ from typing import List, Optional
 
 from .config import DATABASE_FILE, ROOT_DIR
 from .models import User, Credential
-# Add this import at the top of BACKEND/database.py if it's missing
-from contextlib import contextmanager
 
-
-# Ensure the @contextmanager decorator is directly above the function
 @contextmanager
 def get_db_connection():
     """A context manager to handle database connections safely."""
@@ -38,16 +34,13 @@ def execute_raw_query(query_string: str):
         try:
             cursor.execute(query_string)
             
-            # If it's a query that modifies data (not a SELECT)
             if query_string.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE', 'REPLACE')):
                 conn.commit()
                 return (None, None, f"{cursor.rowcount} row(s) affected.", None)
 
-            # If it was a SELECT query that returned no rows
             if cursor.description is None:
                 return ([], [], "Query executed successfully with no results.", None)
                 
-            # If it was a SELECT that returned rows
             columns = [description[0] for description in cursor.description]
             rows = cursor.fetchall()
             return (columns, rows, f"{len(rows)} row(s) returned.", None)
@@ -92,15 +85,16 @@ def initialize_database():
             )
         """)
         
+        default_autosave_dir = os.path.join(ROOT_DIR, "autosaves")
+        os.makedirs(default_autosave_dir, exist_ok=True)
         
-        # --- NEW: Add all default settings for the application ---
+        # --- MODIFIED: Added all new generator settings ---
         default_settings = {
             'autotype_hotkey': '<ctrl>+.',
-            'hide_hotkey': '<ctrl>+/', # <-- ADD THIS LINE
-            'autofilter_length': '3',
+            'autofilter_length': '8',
             # New Password Settings
             'password_length': '16',
-            'password_include_uppercase': '1', # 1 for True, 0 for False
+            'password_include_uppercase': '1', # Using '1' for True, '0' for False
             'password_include_lowercase': '1',
             'password_include_numbers': '1',
             'password_include_symbols': '1',
@@ -115,7 +109,7 @@ def initialize_database():
         
         conn.commit()
 
-# --- User Functions (unchanged) ---
+# --- User Functions ---
 
 def create_user(user: User) -> int:
     with get_db_connection() as conn:
@@ -188,18 +182,15 @@ def update_credential(cred_id: int, service: str, username: str, enc_pass: bytes
         )
         conn.commit()
 
-# --- MODIFIED FUNCTION ---
 def search_credentials(user_id: int, search_term: str, filter_scope: str = "all") -> List[Credential]:
     """Searches credentials for a user based on a search term and a filter scope."""
     credentials = []
-    query_term = f"%{search_term}%" # Add wildcards for LIKE query
+    query_term = f"%{search_term}%" 
     
-    # Base query
     query = "SELECT * FROM credentials WHERE user_id = ?"
     params = [user_id]
 
-    # Dynamically build the rest of the query based on the scope
-    if search_term: # Only add search conditions if there is a search term
+    if search_term: 
         if filter_scope == "sitename":
             query += " AND service_name LIKE ?"
             params.append(query_term)
@@ -209,7 +200,7 @@ def search_credentials(user_id: int, search_term: str, filter_scope: str = "all"
         elif filter_scope == "description":
             query += " AND description LIKE ?"
             params.append(query_term)
-        else: # Default to "all"
+        else: 
             query += " AND (service_name LIKE ? OR username LIKE ? OR description LIKE ?)"
             params.extend([query_term, query_term, query_term])
 
