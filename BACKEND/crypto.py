@@ -2,25 +2,37 @@
 
 import base64
 import hashlib
-import secrets 
-import string  
-import random # --- NEW: Import random for smart number substitution
+import secrets
+import string
+import random
 from cryptography.fernet import Fernet
-from passlib.context import CryptContext
+# from passlib.context import CryptContext
+from passlib.hash import bcrypt_sha256  # use bcrypt+SHA256 to avoid 72-byte limit [web:51]
 
 from .config import KEY_SALT, BCRYPT_ROUNDS, PASSPHRASE_SALT
 
 # 1. --- MASTER PASSWORD HASHING ---
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=BCRYPT_ROUNDS)
+
+# Remove CryptContext config for raw bcrypt; bcrypt_sha256 exposes rounds via 'rounds' kw.
+# If a global cost is desired, define it here from BCRYPT_ROUNDS.
+_BCRYPT_ROUNDS = BCRYPT_ROUNDS  # e.g., 12
+
+def _utf8_len_bytes(s: str) -> int:
+    return len(s.encode("utf-8"))  # count bytes, not characters [web:36]
 
 def hash_master_password(password: str) -> str:
-    """Hashes the master password using bcrypt."""
-    return pwd_context.hash(password)
+    """
+    Hash master password using bcrypt_sha256 to bypass bcrypt's 72-byte input limit safely.
+    """
+    # Optional: quick diagnostic log (remove in production)
+    # print("hash bytes:", _utf8_len_bytes(password))
+    return bcrypt_sha256.using(rounds=_BCRYPT_ROUNDS).hash(password)  # [web:51]
 
 def verify_master_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifies the plain master password against its stored hash."""
-    return pwd_context.verify(plain_password, hashed_password)
-
+    """
+    Verify using bcrypt_sha256.
+    """
+    return bcrypt_sha256.verify(plain_password, hashed_password)  # [web:51]
 
 # 2. --- ENCRYPTION KEY DERIVATION ---
 def derive_key(master_password: str) -> bytes:
@@ -33,7 +45,6 @@ def derive_key(master_password: str) -> bytes:
         dklen=32
     )
     return base64.urlsafe_b64encode(kdf)
-
 
 # 3. --- CREDENTIAL PASSWORD ENCRYPTION/DECRYPTION ---
 def encrypt_password(password_to_encrypt: str, encryption_key: bytes) -> bytes:
@@ -48,9 +59,7 @@ def decrypt_password(encrypted_password: bytes, encryption_key: bytes) -> str:
     decrypted_pass = fernet.decrypt(encrypted_password).decode('utf-8')
     return decrypted_pass
 
-
 # 4. --- PASSPHRASE RECOVERY & GENERATION ---
-
 WORDLIST = [
     'apple', 'banana', 'carrot', 'diamond', 'eagle', 'forest', 'galaxy', 'harbor',
     'island', 'jacket', 'king', 'lemon', 'mountain', 'ninja', 'ocean', 'planet',
@@ -63,33 +72,30 @@ def generate_recovery_passphrase(num_words: int = 4) -> str:
     selected_words = [secrets.choice(WORDLIST) for _ in range(num_words)]
     return "-".join(selected_words)
 
-# --- NEW: Configurable Passphrase Generator ---
+# --- Configurable Passphrase Generator ---
 def generate_passphrase(num_words: int, separator: str, capitalize: bool, include_number: bool) -> str:
     """Generates a configurable, memorable passphrase based on user settings."""
     selected_words = [secrets.choice(WORDLIST) for _ in range(num_words)]
-    
+
     if capitalize:
         selected_words = [word.capitalize() for word in selected_words]
 
     if include_number and num_words > 0:
         word_to_change_idx = secrets.randbelow(num_words)
         word = selected_words[word_to_change_idx]
-        
-        # Leetspeak-style replacements for a more natural feel
+
         replacements = {'e': '3', 'a': '4', 'o': '0', 'l': '1', 's': '5'}
         possible_chars = list(replacements.keys())
-        random.shuffle(possible_chars) # Randomize to avoid predictable substitutions
-        
+        random.shuffle(possible_chars)
+
         for char in possible_chars:
             if char in word.lower():
-                # Replace the first occurrence of the character
                 new_word = word.replace(char, replacements[char], 1)
                 if capitalize:
-                    # Attempt to preserve capitalization
                     new_word = new_word.capitalize()
                 selected_words[word_to_change_idx] = new_word
-                break # Only make one substitution per passphrase
-                
+                break
+
     return separator.join(selected_words)
 
 def _derive_key_from_passphrase(passphrase: str) -> bytes:
@@ -100,7 +106,7 @@ def _derive_key_from_passphrase(passphrase: str) -> bytes:
     kdf = hashlib.pbkdf2_hmac(
         'sha256',
         passphrase.encode('utf-8'),
-        PASSPHRASE_SALT, # Using the new, dedicated salt
+        PASSPHRASE_SALT,
         100000,
         dklen=32
     )
@@ -120,5 +126,4 @@ def decrypt_with_passphrase(encrypted_master_pass: bytes, passphrase: str) -> st
         decrypted_pass = fernet.decrypt(encrypted_master_pass).decode('utf-8')
         return decrypted_pass
     except Exception:
-        # This will catch errors if the wrong passphrase is used
         return ""
