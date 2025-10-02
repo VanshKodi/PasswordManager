@@ -12,21 +12,21 @@ class KeyListenerThread(threading.Thread):
     def __init__(self, hotkey_queue, buffer_queue, hide_queue, autotype_hotkey_str, hide_hotkey_str, buffer_size):
         super().__init__(daemon=True)
         self._stop_event = threading.Event()
-
+    
         # Communication queues
         self.hotkey_queue = hotkey_queue
         self.buffer_queue = buffer_queue
         self.hide_queue = hide_queue
-
-        # Hotkey configurations
-        self.autotype_hotkey_str = autotype_hotkey_str
-        self.hide_hotkey_str = hide_hotkey_str
-
+    
+        # Hotkey configurations with defaults
+        self.autotype_hotkey_str = autotype_hotkey_str or "<ctrl>+."
+        self.hide_hotkey_str = hide_hotkey_str or "<ctrl>+["
+    
         # Buffer for auto-filter
         self.buffer_size = buffer_size
         self._buffer = deque(maxlen=self.buffer_size)
         self._last_key_time = time.time()
-    
+
     def _on_autotype_activate(self):
         """Callback when the auto-type hotkey is pressed."""
         print("Auto-type hotkey detected!")
