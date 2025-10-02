@@ -127,3 +127,49 @@ def decrypt_with_passphrase(encrypted_master_pass: bytes, passphrase: str) -> st
         return decrypted_pass
     except Exception:
         return ""
+
+# --- Shamir Secret Sharing recovery (wrap the plaintext master password) ---
+from Crypto.Protocol.SecretSharing import Shamir  # [web:57]
+from Crypto.Random import get_random_bytes        # [web:57]
+
+def _fernet_key_from_K(K: bytes) -> bytes:
+    """
+    Derive a Fernet key from a 32-byte random secret K.
+    Fernet requires a 32-byte urlsafe base64-encoded key.
+    """
+    return base64.urlsafe_b64encode(hashlib.sha256(K).digest())  # 32B -> 32B base64 key [web:83][web:108]
+
+def make_recovery_bundle(master_password: str, k: int, n: int):
+    """
+    Produce (shares, recovery_blob) for SSS-based recovery.
+    - shares: list[(index:int, share:bytes)]
+    - recovery_blob: bytes, Fernet ciphertext of the plaintext master password
+    """
+    if not isinstance(master_password, str) or not master_password:
+        raise ValueError("master_password must be a non-empty string")
+
+    if not (1 <= k <= n <= 255):
+        raise ValueError("threshold must satisfy 1 <= k <= n <= 255")
+
+    # Random 16-byte secret to be split
+    K = get_random_bytes(16)  # [web:57]
+    FK = _fernet_key_from_K(K)
+    f = Fernet(FK)
+    recovery_blob = f.encrypt(master_password.encode("utf-8"))
+
+    # Split K into n shares with threshold k
+    shares = Shamir.split(k, n, K)  # list[(int, bytes)] [web:57]
+    return shares, recovery_blob
+
+def recover_master_from_shares(shares, recovery_blob: bytes) -> str:
+    """
+    Reconstruct K from any k shares and decrypt the recovery blob to get the plaintext master password.
+    'shares' must be an iterable of (index:int, share:bytes).
+    """
+    if not shares or recovery_blob is None:
+        raise ValueError("shares and recovery_blob are required")
+
+    K = Shamir.combine(list(shares))  # bytes [web:57]
+    FK = _fernet_key_from_K(K)
+    f = Fernet(FK)
+    return f.decrypt(recovery_blob).decode("utf-8")

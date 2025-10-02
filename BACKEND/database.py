@@ -1,7 +1,7 @@
 # BACKEND/database.py
 
 import sqlite3
-import datetime 
+import datetime
 import os
 from contextlib import contextmanager
 from typing import List, Optional
@@ -33,14 +33,14 @@ def execute_raw_query(query_string: str):
         cursor = conn.cursor()
         try:
             cursor.execute(query_string)
-            
+
             if query_string.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE', 'REPLACE')):
                 conn.commit()
                 return (None, None, f"{cursor.rowcount} row(s) affected.", None)
 
             if cursor.description is None:
                 return ([], [], "Query executed successfully with no results.", None)
-                
+
             columns = [description[0] for description in cursor.description]
             rows = cursor.fetchall()
             return (columns, rows, f"{len(rows)} row(s) returned.", None)
@@ -53,17 +53,23 @@ def initialize_database():
     """Creates all necessary tables and default settings if they don't exist."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        
+
+        # Users table with SSS-based recovery fields
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 hashed_master_password TEXT NOT NULL,
                 password_hint TEXT,
-                recovery_passphrase_protected_master BLOB
+                recovery_passphrase_protected_master BLOB,
+                -- SSS recovery fields
+                recovery_blob BLOB,
+                recovery_k INTEGER,
+                recovery_n INTEGER,
+                recovery_created_at TEXT
             )
         """)
-        
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS credentials (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,36 +83,39 @@ def initialize_database():
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
         """)
-        
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 setting_name TEXT PRIMARY KEY NOT NULL,
                 setting_value TEXT
             )
         """)
-        
+
         default_autosave_dir = os.path.join(ROOT_DIR, "autosaves")
         os.makedirs(default_autosave_dir, exist_ok=True)
-        
-        # --- MODIFIED: Added all new generator settings ---
+
+        # Default settings (including generator options)
         default_settings = {
             'autotype_hotkey': '<ctrl>+.',
             'autofilter_length': '8',
-            # New Password Settings
+            # Password Settings
             'password_length': '16',
-            'password_include_uppercase': '1', # Using '1' for True, '0' for False
+            'password_include_uppercase': '1',
             'password_include_lowercase': '1',
             'password_include_numbers': '1',
             'password_include_symbols': '1',
-            # New Passphrase Settings
+            # Passphrase Settings
             'passphrase_num_words': '4',
             'passphrase_separator': '-',
             'passphrase_capitalize': '1',
             'passphrase_include_number': '1'
         }
         for name, value in default_settings.items():
-            cursor.execute("INSERT OR IGNORE INTO settings (setting_name, setting_value) VALUES (?, ?)", (name, value))
-        
+            cursor.execute(
+                "INSERT OR IGNORE INTO settings (setting_name, setting_value) VALUES (?, ?)",
+                (name, value)
+            )
+
         conn.commit()
 
 # --- User Functions ---
@@ -114,7 +123,10 @@ def initialize_database():
 def create_user(user: User) -> int:
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO users (username, hashed_master_password) VALUES (?, ?)", (user.username, user.hashed_master_password))
+        cursor.execute(
+            "INSERT INTO users (username, hashed_master_password) VALUES (?, ?)",
+            (user.username, user.hashed_master_password)
+        )
         conn.commit()
         return cursor.lastrowid
 
@@ -124,14 +136,67 @@ def get_user_by_username(username: str) -> Optional[User]:
         cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
         row = cursor.fetchone()
         if row:
-            return User(id=row['id'], username=row['username'], hashed_master_password=row['hashed_master_password'],
-                        password_hint=row['password_hint'], recovery_passphrase_protected_master=row['recovery_passphrase_protected_master'])
+            return User(
+                id=row['id'],
+                username=row['username'],
+                hashed_master_password=row['hashed_master_password'],
+                password_hint=row['password_hint'],
+                recovery_passphrase_protected_master=row['recovery_passphrase_protected_master']
+            )
         return None
 
 def update_user_recovery_info(user_id: int, hint: Optional[str], passphrase_blob: Optional[bytes]):
     with get_db_connection() as conn:
-        conn.execute("UPDATE users SET password_hint = ?, recovery_passphrase_protected_master = ? WHERE id = ?",
-                     (hint, passphrase_blob, user_id))
+        conn.execute(
+            "UPDATE users SET password_hint = ?, recovery_passphrase_protected_master = ? WHERE id = ?",
+            (hint, passphrase_blob, user_id)
+        )
+        conn.commit()
+
+# New SSS bundle helpers
+
+def update_user_recovery_bundle(user_id: int, recovery_blob: bytes, k: int, n: int, created_at: Optional[str] = None) -> None:
+    """
+    Sets the SSS recovery bundle for a user:
+    - recovery_blob: Fernet ciphertext of the plaintext master password.
+    - k, n: threshold parameters.
+    - created_at: ISO-8601 timestamp; if None, use now.
+    """
+    ts = created_at or datetime.datetime.now().isoformat()
+    with get_db_connection() as conn:
+        conn.execute("""
+            UPDATE users
+               SET recovery_blob = ?, recovery_k = ?, recovery_n = ?, recovery_created_at = ?
+             WHERE id = ?
+        """, (recovery_blob, k, n, ts, user_id))
+        conn.commit()
+
+def get_user_recovery_bundle(user_id: int):
+    """
+    Returns (recovery_blob: bytes|None, k: int|None, n: int|None, created_at: str|None).
+    """
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT recovery_blob, recovery_k, recovery_n, recovery_created_at
+              FROM users
+             WHERE id = ?
+        """, (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return (None, None, None, None)
+        return (row["recovery_blob"], row["recovery_k"], row["recovery_n"], row["recovery_created_at"])
+
+def clear_user_recovery_bundle(user_id: int) -> None:
+    with get_db_connection() as conn:
+        conn.execute("""
+            UPDATE users
+               SET recovery_blob = NULL,
+                   recovery_k = NULL,
+                   recovery_n = NULL,
+                   recovery_created_at = NULL
+             WHERE id = ?
+        """, (user_id,))
         conn.commit()
 
 # --- Credential Functions ---
@@ -144,8 +209,15 @@ def add_credential(credential: Credential) -> None:
             """INSERT INTO credentials 
                (user_id, service_name, username, encrypted_password, description, date_created, date_modified) 
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (credential.user_id, credential.service_name, credential.username, credential.encrypted_password,
-             credential.description, now, now)
+            (
+                credential.user_id,
+                credential.service_name,
+                credential.username,
+                credential.encrypted_password,
+                credential.description,
+                now,
+                now
+            )
         )
         conn.commit()
 
@@ -158,9 +230,14 @@ def get_credentials_for_user(user_id: int) -> List[Credential]:
         rows = cursor.fetchall()
         for row in rows:
             credentials.append(Credential(
-                id=row['id'], user_id=row['user_id'], service_name=row['service_name'],
-                username=row['username'], encrypted_password=row['encrypted_password'],
-                description=row['description'], date_created=row['date_created'], date_modified=row['date_modified']
+                id=row['id'],
+                user_id=row['user_id'],
+                service_name=row['service_name'],
+                username=row['username'],
+                encrypted_password=row['encrypted_password'],
+                description=row['description'],
+                date_created=row['date_created'],
+                date_modified=row['date_modified']
             ))
     return credentials
 
@@ -185,12 +262,12 @@ def update_credential(cred_id: int, service: str, username: str, enc_pass: bytes
 def search_credentials(user_id: int, search_term: str, filter_scope: str = "all") -> List[Credential]:
     """Searches credentials for a user based on a search term and a filter scope."""
     credentials = []
-    query_term = f"%{search_term}%" 
-    
+    query_term = f"%{search_term}%"
+
     query = "SELECT * FROM credentials WHERE user_id = ?"
     params = [user_id]
 
-    if search_term: 
+    if search_term:
         if filter_scope == "sitename":
             query += " AND service_name LIKE ?"
             params.append(query_term)
@@ -200,7 +277,7 @@ def search_credentials(user_id: int, search_term: str, filter_scope: str = "all"
         elif filter_scope == "description":
             query += " AND description LIKE ?"
             params.append(query_term)
-        else: 
+        else:
             query += " AND (service_name LIKE ? OR username LIKE ? OR description LIKE ?)"
             params.extend([query_term, query_term, query_term])
 
@@ -212,9 +289,14 @@ def search_credentials(user_id: int, search_term: str, filter_scope: str = "all"
         rows = cursor.fetchall()
         for row in rows:
             credentials.append(Credential(
-                id=row['id'], user_id=row['user_id'], service_name=row['service_name'],
-                username=row['username'], encrypted_password=row['encrypted_password'],
-                description=row['description'], date_created=row['date_created'], date_modified=row['date_modified']
+                id=row['id'],
+                user_id=row['user_id'],
+                service_name=row['service_name'],
+                username=row['username'],
+                encrypted_password=row['encrypted_password'],
+                description=row['description'],
+                date_created=row['date_created'],
+                date_modified=row['date_modified']
             ))
     return credentials
 
@@ -229,5 +311,8 @@ def get_setting(setting_name: str) -> Optional[str]:
 
 def update_setting(setting_name: str, setting_value: str) -> None:
     with get_db_connection() as conn:
-        conn.execute("INSERT OR REPLACE INTO settings (setting_name, setting_value) VALUES (?, ?)", (setting_name, setting_value))
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (setting_name, setting_value) VALUES (?, ?)",
+            (setting_name, setting_value)
+        )
         conn.commit()
